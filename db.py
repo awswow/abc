@@ -1,4 +1,3 @@
-# db.py
 import psycopg2
 import logging
 from psycopg2 import sql
@@ -20,38 +19,42 @@ def get_db_connection():
         host=DB_HOST
     )
 
+def user_exists(chat_id: int) -> bool:
+    """Check if a user exists in the database by their chat_id."""
+    try:
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT 1
+                    FROM users
+                    WHERE chat_id = %s
+                """, (chat_id,))
+                result = cursor.fetchone()
+        return result is not None
+    except Exception as e:
+        logging.error(f"Error checking if user exists: {e}")
+        return False
+
 def save_user_data(user_data: Dict[str, str]):
     """Save the user data to the database."""
     try:
-        # Connect to the PostgreSQL database
-        connection = get_db_connection()
-        cursor = connection.cursor()
-
-        # Insert query to save user data
-        insert_query = sql.SQL("""
-            INSERT INTO users (chat_id, gender, name, photo_filename, city, bio, age, username)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """)
-
-        # Insert data into the table
-        cursor.execute(insert_query, (
-            user_data['chat_id'],
-            user_data['gender'],
-            user_data['name'],
-            user_data['photo_filename'],
-            user_data['city'],
-            user_data['bio'],
-            user_data['age'],
-            user_data['username']
-        ))
-
-        # Commit the transaction
-        connection.commit()
-
-        # Close the connection
-        cursor.close()
-        connection.close()
-
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                insert_query = sql.SQL(""" 
+                    INSERT INTO users (chat_id, gender, name, photo_filename, city, bio, age, username)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """)
+                cursor.execute(insert_query, (
+                    user_data['chat_id'],
+                    user_data['gender'],
+                    user_data['name'],
+                    user_data['photo_filename'],
+                    user_data.get('city', None),
+                    user_data.get('bio', None),
+                    user_data.get('age', None),
+                    user_data.get('username', None)
+                ))
+            connection.commit()
         logging.info("User data saved successfully.")
     except Exception as e:
         logging.error(f"Error saving user data: {e}")
@@ -59,22 +62,16 @@ def save_user_data(user_data: Dict[str, str]):
 def find_user(chat_id: int) -> Optional[Dict[str, str]]:
     """Find a user in the database by their chat ID."""
     try:
-        # Connect to the PostgreSQL database
-        connection = get_db_connection()
-        cursor = connection.cursor()
-
-        # Query to find a user by chat_id
-        cursor.execute("""
-            SELECT chat_id, gender, name, photo_filename, city, bio, age, username
-            FROM users
-            WHERE chat_id = %s
-        """, (chat_id,))
-
-        # Fetch the result
-        result = cursor.fetchone()
-
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(""" 
+                    SELECT chat_id, gender, name, photo_filename, city, bio, age, username
+                    FROM users
+                    WHERE chat_id = %s
+                """, (chat_id,))
+                result = cursor.fetchone()
+        
         if result:
-            # Return user data as a dictionary if user is found
             return {
                 "chat_id": result[0],
                 "gender": result[1],
@@ -92,60 +89,46 @@ def find_user(chat_id: int) -> Optional[Dict[str, str]]:
         return None
 
 def update_user_profile(chat_id: int, updated_data: Dict[str, str]):
-    """Update a user's profile data."""
+    """Update specific fields of a user's profile data."""
     try:
-        # Connect to the PostgreSQL database
-        connection = get_db_connection()
-        cursor = connection.cursor()
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                set_clause = []
+                values = []
 
-        # Update query to change user data
-        update_query = sql.SQL("""
-            UPDATE users
-            SET gender = %s, name = %s, photo_filename = %s, city = %s, bio = %s, age = %s, username = %s
-            WHERE chat_id = %s
-        """)
+                for key, value in updated_data.items():
+                    set_clause.append(sql.SQL("{} = %s").format(sql.Identifier(key)))
+                    values.append(value)
 
-        cursor.execute(update_query, (
-            updated_data['gender'],
-            updated_data['name'],
-            updated_data['photo_filename'],
-            updated_data['city'],
-            updated_data['bio'],
-            updated_data['age'],
-            updated_data['username'],
-            chat_id
-        ))
+                set_clause = sql.SQL(", ").join(set_clause)
+                values.append(chat_id)  # Add chat_id as the last value for WHERE clause
 
-        # Commit the transaction
-        connection.commit()
+                update_query = sql.SQL(""" 
+                    UPDATE users 
+                    SET {set_clause} 
+                    WHERE chat_id = %s 
+                """).format(set_clause=set_clause)
 
-        # Close the connection
-        cursor.close()
-        connection.close()
+                cursor.execute(update_query, values)
+            connection.commit()
 
-        logging.info("User profile updated successfully.")
+        logging.info(f"User profile with chat_id {chat_id} updated successfully.")
     except Exception as e:
         logging.error(f"Error updating user profile: {e}")
 
 def get_users_in_city_and_age(gender: str, city: str, min_age: int, max_age: int) -> list:
     """Find users in the same city and with an age range of +-1 year from the given age."""
     try:
-        # Connect to the PostgreSQL database
-        connection = get_db_connection()
-        cursor = connection.cursor()
+        with get_db_connection() as connection:
+            with connection.cursor() as cursor:
+                query = """
+                    SELECT name, city, gender, age, photo_filename, bio
+                    FROM users
+                    WHERE city = %s AND age BETWEEN %s AND %s AND gender = %s
+                """
+                cursor.execute(query, (city, min_age, max_age, gender))
+                users = cursor.fetchall()
 
-        # Query to find users in the same city and within the age range
-        query = """
-            SELECT name, city, gender, age, photo_filename, bio
-            FROM users
-            WHERE city = %s AND age BETWEEN %s AND %s AND gender = %s
-        """
-        cursor.execute(query, (city, min_age, max_age, gender))
-
-        # Fetch all matching records
-        users = cursor.fetchall()
-
-        # Prepare the result as a list of dictionaries
         user_list = []
         for user in users:
             user_data = {
@@ -157,10 +140,6 @@ def get_users_in_city_and_age(gender: str, city: str, min_age: int, max_age: int
                 "bio": user[5]
             }
             user_list.append(user_data)
-
-        # Close the connection
-        cursor.close()
-        connection.close()
 
         return user_list
     except Exception as e:

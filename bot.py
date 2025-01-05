@@ -1,188 +1,131 @@
+from telegram import Update
+from telegram.ext import CallbackContext, CommandHandler, MessageHandler, filters, ConversationHandler
+from db import save_user_data, find_user, update_user_profile
 import logging
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import ContextTypes
-from db import save_user_data, find_user  # Assuming db.py handles database operations
 
-# Define states for the conversation
-GENDER, PHOTO, LOCATION, BIO = range(4)
+GENDER, PHOTO, CITY, BIO, AGE, UPDATE_PROFILE = range(6)
 
-# Start the conversation or ask to update profile or search
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Start the profile creation process or ask user to update profile or search for users if already in DB."""
+async def start(update: Update, context: CallbackContext):
+    """Handle start command and initiate conversation."""
     user = update.message.from_user
-    chat_id = user.id
+    await update.message.reply_text("Welcome! What's your gender? (Male/Female/Other)")
+    return GENDER
 
-    # Check if the user already exists in the database
-    existing_user = find_user(chat_id)
-    
-    if existing_user:
-        # If user exists, offer options to either update their profile or search for users
-        keyboard = [
-            [InlineKeyboardButton("Update Profile", callback_data="update_profile")],
-            [InlineKeyboardButton("Search Users", callback_data="search_users")],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.message.reply_text(
-            "Welcome back! You already have a profile. What would you like to do?",
-            reply_markup=reply_markup
-        )
-        return -1  # End conversation if user is found in DB
-    
-    else:
-        # If user does not exist, start profile creation process
-        keyboard = [
-            ["Boy", "Girl", "Other"]
-        ]
-        reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, input_field_placeholder="Boy or Girl?")
-        
-        await update.message.reply_text(
-            "Hi! My name is Professor Bot. I will hold a conversation with you. Send /cancel to stop talking to me.\n\n"
-            "Are you a boy, girl, or other?",
-            reply_markup=reply_markup
-        )
-        
-        return GENDER  # Proceed to GENDER state
-
-# Handle gender input and move to photo state
-async def gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Stores the selected gender and asks for a photo."""
+async def gender(update: Update, context: CallbackContext):
+    """Handle gender input."""
     user = update.message.from_user
-    gender = update.message.text  # Get gender input from user
-    context.user_data['gender'] = gender  # Save gender to user data
-
-    # Reply to the user and ask for a photo
-    await update.message.reply_text(
-        f"Got it! You're a {gender}. Please send me a photo of yourself, "
-        "or send /skip if you don't want to upload one."
-    )
-    
+    context.user_data['gender'] = update.message.text
+    await update.message.reply_text("Please send a photo.")
     return PHOTO
 
-# Handle photo input and move to location state
-async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Stores the photo and asks for a location."""
+async def photo(update: Update, context: CallbackContext):
+    """Handle photo input."""
     user = update.message.from_user
-    photo = update.message.photo[-1].file_id  # Save the photo file ID
-    context.user_data['photo'] = photo  # Save photo
+    context.user_data['photo'] = update.message.photo[-1].file_id
+    await update.message.reply_text("What's your city?")
+    return CITY
 
-    # Ask for location (city)
-    await update.message.reply_text(
-        "Nice photo! Now, please tell me your city, or send /skip if you don't want to share."
-    )
-
-    return LOCATION
-
-# Handle location input and move to bio state
-async def location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Stores the location (city) and asks for bio."""
-    city = update.message.text
-    context.user_data['city'] = city  # Save city to user data
-
-    # Ask for bio
-    await update.message.reply_text("Great! Now, tell me something about yourself (your bio).")
-
+async def city(update: Update, context: CallbackContext):
+    """Handle city input."""
+    user = update.message.from_user
+    context.user_data['city'] = update.message.text
+    await update.message.reply_text("Tell me about yourself (bio).")
     return BIO
 
-# Handle bio input and save user data
-async def bio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Stores the bio and saves all user data to the database."""
-    bio = update.message.text
-    context.user_data['bio'] = bio  # Save bio to user data
+async def bio(update: Update, context: CallbackContext):
+    """Handle bio input."""
+    user = update.message.from_user
+    context.user_data['bio'] = update.message.text
+    await update.message.reply_text("How old are you?")
+    return AGE
 
-    # Prepare user data
+async def age(update: Update, context: CallbackContext):
+    """Handle age input."""
+    user = update.message.from_user
+    context.user_data['age'] = update.message.text
+
+    # Save user data to DB
     user_data = {
-        "chat_id": update.message.from_user.id,
-        "gender": context.user_data['gender'],
-        "name": update.message.from_user.first_name,
-        "photo_filename": context.user_data.get('photo', ''),  # Save photo ID or filename
-        "city": context.user_data['city'],
-        "bio": bio,
-        "age": 0,  # Default age, you can add an age step if needed
-        "username": update.message.from_user.username
+        'chat_id': user.id,
+        'gender': context.user_data['gender'],
+        'name': user.first_name,
+        'photo_filename': context.user_data['photo'],
+        'city': context.user_data['city'],
+        'bio': context.user_data['bio'],
+        'age': context.user_data['age'],
+        'username': user.username
     }
-
-    # Save to the database
     save_user_data(user_data)
 
-    await update.message.reply_text("Thanks for creating your profile!")
+    await update.message.reply_text("Your profile has been saved successfully!")
+    return ConversationHandler.END
 
-    return -1  # End the conversation
-
-# Handle skipping photo
-async def skip_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Skips the location and bio input."""
-    await update.message.reply_text("Okay, no location shared. Tell me something about yourself.")
-
-    return BIO
-
-# Handle the update profile callback query
-async def update_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle the 'Update Profile' button press."""
+async def update_profile(update: Update, context: CallbackContext):
+    """Handle update profile option."""
     user = update.message.from_user
-    chat_id = user.id
-
-    # Fetch user profile from database using chat_id
-    existing_user = find_user(chat_id)
-    if existing_user:
-        # If user exists, ask if they want to update their profile
-        keyboard = [
-            ["Change Name", "Change Gender", "Change Photo", "Change City", "Change Bio"]
-        ]
-        reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True)
-
-        await update.message.reply_text(
-            "What would you like to update? Choose an option below.",
-            reply_markup=reply_markup
-        )
-
-        return -1  # End the conversation, the next action will be handled in the respective state
+    user_data = find_user(user.id)
+    if user_data:
+        await update.message.reply_text(f"Current profile:\nName: {user_data['name']}\nCity: {user_data['city']}\nAge: {user_data['age']}")
+        await update.message.reply_text("What would you like to update? (Gender/Name/Bio/City/Age)")
+        return UPDATE_PROFILE
     else:
-        # If user does not exist, initiate the profile creation process
-        keyboard = [
-            ["Boy", "Girl", "Other"]
-        ]
-        reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, input_field_placeholder="Boy or Girl?")
-        
-        await update.message.reply_text(
-            "Hi! My name is Professor Bot. I will help you set up your profile. Please select your gender.",
-            reply_markup=reply_markup
-        )
-        
-        return GENDER  # Proceed to GENDER state
-# Handle the update photo callback query
-async def update_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle the update photo process."""
-    query = update.callback_query
-    query.answer()  # Acknowledge the callback query
-    
-    await query.edit_message_text("Please send a new photo to update your profile.")
+        await update.message.reply_text("You haven't created a profile yet.")
+        return ConversationHandler.END
 
-    return PHOTO
+async def update_gender(update: Update, context: CallbackContext):
+    """Handle updating gender."""
+    user = update.message.from_user
+    new_gender = update.message.text
+    update_user_profile(user.id, {'gender': new_gender})
+    await update.message.reply_text(f"Your gender has been updated to {new_gender}.")
+    return ConversationHandler.END
 
-# Handle the update location callback query
-async def update_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle the update location process."""
-    query = update.callback_query
-    query.answer()  # Acknowledge the callback query
-    
-    await query.edit_message_text("Please send your new city to update your location.")
+async def update_name(update: Update, context: CallbackContext):
+    """Handle updating name."""
+    user = update.message.from_user
+    new_name = update.message.text
+    update_user_profile(user.id, {'name': new_name})
+    await update.message.reply_text(f"Your name has been updated to {new_name}.")
+    return ConversationHandler.END
 
-    return LOCATION
+async def update_bio(update: Update, context: CallbackContext):
+    """Handle updating bio."""
+    user = update.message.from_user
+    new_bio = update.message.text
+    update_user_profile(user.id, {'bio': new_bio})
+    await update.message.reply_text(f"Your bio has been updated to {new_bio}.")
+    return ConversationHandler.END
 
-# Handle the update bio callback query
-async def update_bio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle the update bio process."""
-    query = update.callback_query
-    query.answer()  # Acknowledge the callback query
-    
-    await query.edit_message_text("Please send your new bio to update your profile.")
+async def update_city(update: Update, context: CallbackContext):
+    """Handle updating city."""
+    user = update.message.from_user
+    new_city = update.message.text
+    update_user_profile(user.id, {'city': new_city})
+    await update.message.reply_text(f"Your city has been updated to {new_city}.")
+    return ConversationHandler.END
 
+async def update_age(update: Update, context: CallbackContext):
+    """Handle updating age."""
+    user = update.message.from_user
+    new_age = update.message.text
+    update_user_profile(user.id, {'age': new_age})
+    await update.message.reply_text(f"Your age has been updated to {new_age}.")
+    return ConversationHandler.END
+
+async def update_photo(update: Update, context: CallbackContext):
+    """Handles the update photo option."""
+    user = update.message.from_user
+    new_photo = update.message.photo[-1].file_id
+    update_user_profile(user.id, {'photo_filename': new_photo})
+    await update.message.reply_text(f"Your photo has been updated.")
+    return ConversationHandler.END
+
+async def skip_city(update: Update, context: CallbackContext):
+    """Handle skipping city input."""
+    await update.message.reply_text("City skipped.")
     return BIO
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle cancellation of the conversation."""
-    await update.message.reply_text(
-        "Goodbye! Your profile creation has been cancelled. If you'd like to start again, just send /start."
-    )
-    return -1  # End the conversation
+async def cancel(update: Update, context: CallbackContext):
+    """Cancel the current conversation and reset the state."""
+    await update.message.reply_text("Conversation canceled. You can start again anytime by typing /start.")
+    return ConversationHandler.END
